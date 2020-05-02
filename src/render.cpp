@@ -6,19 +6,21 @@
 #include <libraries/Scope/Scope.h>
 #include "TapTempo.h"
 
-#define DELAY_MOD_SAMPLES 10000    // samples for LFO modulation
+#define DELAY_MOD_SAMPLES 10000 // samples for LFO modulation
 #define LFO_FREQ_RANGE 2        
 
 #define DELAY_BUFFER_SIZE 176400
 #define CONTROL_FRAME_SIZE 8192
 
-#define DELAY_SAMPLE_ERR 60    // for potentiometer drift
-#define DELAY_GROWTH_AMOUNT 0.100
+#define DELAY_SAMPLE_ERR 60 // for potentiometer drift
+#define DELAY_GROWTH_AMOUNT 0.0100
 #define DELAY_CROSSFADE_CUTOFF 20000
 #define DELAY_TIME_ADJUST 0.001
 #define DELAY_MAX_ADJUST_SAMPS 20
 LFO z_LFO;
 TapTempo tapt;
+
+std::vector<float> gDelayTimeArr;
 
 // instantiate the scope
 Scope scope;
@@ -28,7 +30,7 @@ float gTapeStopCoeff = 1.0;
 int momentaryVal = 0;
 
 // prev samples buffer{
-float gDelayBuffer_l[DELAY_BUFFER_SIZE] = {0};        
+float gDelayBuffer_l[DELAY_BUFFER_SIZE] = {0};      
 float gDelayBuffer_r[DELAY_BUFFER_SIZE] = {0};
 
 int gDelayParamCount = 0;
@@ -40,7 +42,7 @@ float gLastDelayBufReadPtr = 0;
  
 // delay vars
 float gDelayGrowth = 0;
-float gDelayTimeMS = 1000;    // has to have initial value for scaled potentiometer interaction 
+float gDelayTimeMS = 1000;  // has to have initial value for scaled potentiometer interaction 
 float gDelayTimePot = 0; 
 float gLastDelayTimePot = 0; 
 
@@ -70,6 +72,7 @@ float gDel_x2_r = 0;
 float gDel_y1_r = 0;
 float gDel_y2_r = 0;
 
+
 // for digital reading the right frames
 int gAudioFramesPerAnalogFrame;
 float gInverseSampleRate;
@@ -77,22 +80,14 @@ float gPhase;
 
 
 // print vars
-float    gInterval = 0.5;
-float    gSecondsElapsed = 0;
+float   gInterval = 0.5;
+float   gSecondsElapsed = 0;
 int     gCount = 0;
 
 std::vector<bool> a_buttonState = {0,0,0,0};
 std::vector<bool> b_buttonState = {0,0,0,0};
 std::vector<int> a_lastButtonValues = {0,0,0,0};
 std::vector<int> b_lastButtonValues = {0,0,0,0};
-
-// tap tempo 
-float    gTapTempoMSIntervals[3] = {DELAY_BUFFER_SIZE,DELAY_BUFFER_SIZE,DELAY_BUFFER_SIZE};
-int     gTapTimerTicks;
-int     gTapNdx = 0;
-int     gTapLastNdx = 0;
-float    gTapTempoMS;
-float    gDelayTimeArr[8] = {0,0,0,0,0,0,0,0};
 
 AuxiliaryTask gSetDelayTimeTask;
 
@@ -101,7 +96,21 @@ int gCrossfadeCounter = 1;
 int gCrossfadeLength = 1024;
 
 int     gTempFlag = 0;
-float    gLastTarget;
+float   gLastTarget;
+
+
+void createDelayTimeDivisions(float delayMS)
+{
+    gDelayTimeArr.clear();
+    gDelayTimeArr.push_back(delayMS);
+    gDelayTimeArr.push_back(delayMS / 2.0);         
+    gDelayTimeArr.push_back(delayMS / 4.0);
+    gDelayTimeArr.push_back(delayMS / 8.0);
+    gDelayTimeArr.push_back(delayMS * (2.0 / 3.0));
+    gDelayTimeArr.push_back(delayMS * (1.0 / 6.0));
+    gDelayTimeArr.push_back(delayMS * (1.0 / 6.0));
+}
+
 
 // this is responsible for all the tape stuff
 void setDelayTime_Background(void* arg)
@@ -134,7 +143,7 @@ void setDelayTime_Background(void* arg)
             }
             // delay is growing
             else if (gDelayInSamples < gTargetDelayInSamples)
-            {    
+            {   
                 
                 float delaySampleChange = fabsf_neon(diff) * DELAY_TIME_ADJUST;
                 if (delaySampleChange > DELAY_MAX_ADJUST_SAMPS) { delaySampleChange = DELAY_MAX_ADJUST_SAMPS; }
@@ -156,7 +165,7 @@ void setDelayTime_Background(void* arg)
         // otherwise this is a "big" delay change, so we while crossfade buffers instead
         else{
             gCrossfadeFlag = 1;
-        }    
+        }   
     }
     else{
         // float delaySampleChange = DELAY_MAX_ADJUST_SAMPS;
@@ -166,8 +175,8 @@ void setDelayTime_Background(void* arg)
         // gDelayFeedbackAmount = 0.0;
     }
     
-    if    (gDelayInSamples < 0)    { gDelayInSamples = 0; }
-    if    (gDelayInSamples > 88200)    { gDelayInSamples = 88200; }
+    if  (gDelayInSamples < 0)   { gDelayInSamples = 0; }
+    if  (gDelayInSamples > 88200)   { gDelayInSamples = 88200; }
 }
 
 bool setup(BelaContext *context, void *userData)
@@ -188,17 +197,12 @@ bool setup(BelaContext *context, void *userData)
     gInverseSampleRate = 1.0 / context->audioSampleRate;
     
     tapt.setInverseSampleRate(gInverseSampleRate);
-    
+    createDelayTimeDivisions(gDelayTimeMS);
+
     
     gPhase = 0.0;
     
     return true;
-}
-
-void zeroTapTempoArray() {
-    gTapTempoMSIntervals[0] = DELAY_BUFFER_SIZE;
-    gTapTempoMSIntervals[1] = DELAY_BUFFER_SIZE;
-    gTapTempoMSIntervals[2] = DELAY_BUFFER_SIZE;
 }
 
 void render(BelaContext *context, void *userData)
@@ -208,20 +212,19 @@ void render(BelaContext *context, void *userData)
 
      for(unsigned int n = 0; n < context->audioFrames; n++) 
      {
-             tapt.tick();
-             gTapTimerTicks++;
+            tapt.tick();
 
             // There are twice as many audio frames as matrix frames
             if(!(n % (gAudioFramesPerAnalogFrame))) {
-                //
+                
                 buttonPadValues[0] = digitalRead(context, 0, 14);
                 buttonPadValues[1] = digitalRead(context, 0, 15);
                 buttonPadValues[2] = digitalRead(context, 0, 13);
                 buttonPadValues[3] = digitalRead(context, 0, 12);
-                //
+                
                 momentaryVal = digitalRead(context, 0, 0);
                 toggleVal = digitalRead(context, 0, 1);
-                //
+                
                 gEffectMix = constrain(map(analogRead(context, n/gAudioFramesPerAnalogFrame, 0), 0, 0.85, 0, 1), 0, 1);
                 gEffectParam = constrain(map(analogRead(context, n/gAudioFramesPerAnalogFrame, 1), 0, 0.85, 1, 0), 0, 1);
                 gDelayFeedbackAmount = constrain(map(analogRead(context, n/gAudioFramesPerAnalogFrame, 3), 0, 0.8, 1.4, 0), 0, 1.4);
@@ -235,13 +238,7 @@ void render(BelaContext *context, void *userData)
                 // attempt to filter out pot wobble
                 if( fabsf_neon((int)(gDelayTimePot * 100) - (int)(gLastDelayTimePot * 100)) > 4.0 ){
                     gDelayTimeMS = 1000.0 * gDelayTimePot;
-                    gDelayTimeArr[0] = gDelayTimeMS;
-                    gDelayTimeArr[1] = gDelayTimeMS / 2.0;            
-                    gDelayTimeArr[2] = gDelayTimeMS / 4.0;
-                    gDelayTimeArr[3] = gDelayTimeMS / 8.0;
-                    gDelayTimeArr[4] = gDelayTimeMS * (2.0 / 3.0);
-                    gDelayTimeArr[5] = gDelayTimeMS * (1.0 / 6.0);
-                    gDelayTimeArr[6] = gDelayTimeMS * (1.0 / 6.0);
+                    createDelayTimeDivisions(gDelayTimeMS);
                     gLastDelayTimePot = gDelayTimePot;
                 }
                 
@@ -251,10 +248,10 @@ void render(BelaContext *context, void *userData)
                     for (int i = 0; i < 4; i++) {
                         // set the delay time if its different
                         if( buttonPadValues[i] == 1 && (a_lastButtonValues[i] == 0) ){
-                            gDelayTimeMS = gDelayTimeArr[i];
-                            zeroTapTempoArray();
+                            gDelayTimeMS = gDelayTimeArr.at(i);
+                            // tapt.zeroIntervalArray();
                             a_buttonState[i] = !a_buttonState[i];
-                        }    
+                        }   
                         // save last values
                         a_lastButtonValues[i] = buttonPadValues[i];
                         b_lastButtonValues[i] = buttonPadValues[i];
@@ -263,14 +260,11 @@ void render(BelaContext *context, void *userData)
                 // tap tempo and dotted tempo divisions
                 else if (toggleVal == 1) {
                     // tap tempo
+                    
                     if( buttonPadValues[0] == 0 && (b_lastButtonValues[0] == 1) ) {
-                                            
-                                            
-                                            
                         tapt.tap();
-                        gTapTempoMS = tapt.getTapTempoMS();
+                        createDelayTimeDivisions(tapt.getTapTempoMS());
 
-                
                     }
                     // save last values
                     b_lastButtonValues[0] = buttonPadValues[0];
@@ -279,10 +273,10 @@ void render(BelaContext *context, void *userData)
                     for (int i = 1; i < 4; i++) {
                         //set delay times according to divisions
                         if( buttonPadValues[i] == 1 && (b_lastButtonValues[i] == 0) ){
-                            gDelayTimeMS = gDelayTimeArr[i+3];
-                            zeroTapTempoArray();
+                            gDelayTimeMS = gDelayTimeArr.at(i+3);
+                    //      // tapt.zeroIntervalArray();
                             b_buttonState[i] = !b_buttonState[i];
-                        }                        
+                        }                       
                         b_lastButtonValues[i] = buttonPadValues[i];
                         a_lastButtonValues[i] = buttonPadValues[i];
                     }
@@ -292,7 +286,7 @@ void render(BelaContext *context, void *userData)
         
             // schedule the task to change the delay time
             if(++gDelayParamCount > CONTROL_FRAME_SIZE){
-                Bela_scheduleAuxiliaryTask(gSetDelayTimeTask);        // launch
+                Bela_scheduleAuxiliaryTask(gSetDelayTimeTask);      // launch
             }
     
             float out_l = 0.0;
@@ -349,18 +343,18 @@ void render(BelaContext *context, void *userData)
             gDelayBuffer_r[gDelayBufWritePtr] = del_input_r;
 
             // we update the read pointer
-             gLastDelayBufReadPtr = gDelayBufReadPtr;
-             
-             // tape stop / restart handled hear
+            gLastDelayBufReadPtr = gDelayBufReadPtr;
+            
+            // tape stop / restart handled hear
             if (momentaryVal == 1) {
                 if (gTapeStopCoeff < 1.0 ) {
-                    gTapeStopCoeff = 1.001*gTapeStopCoeff;     
+                    gTapeStopCoeff = 1.001*gTapeStopCoeff;   
                     gDelayBufReadPtr += gTapeStopCoeff;
                 } else {
                     gDelayBufReadPtr += (1 - gDelayGrowth);
                 }
             }else {
-                gTapeStopCoeff = 0.9999*gTapeStopCoeff;                
+                gTapeStopCoeff = 0.9999*gTapeStopCoeff;             
                 gDelayBufReadPtr += gTapeStopCoeff;
 
             }
@@ -385,77 +379,18 @@ void render(BelaContext *context, void *userData)
             double la = gDelayBufReadPtr - (double)rpi;
             del_out_l += 0.5 * ( (la * gDelayBuffer_l[lrpi]) + ((1-la) * gDelayBuffer_l[lrpi+1]) );
             del_out_r += 0.5 * ( (la * gDelayBuffer_r[lrpi]) + ((1-la) * gDelayBuffer_r[lrpi+1]) );
-           
-            // // cross fade across large sample delay changes
-            // if ((gCrossfadeFlag==1) && (gCrossfadeCounter <= gCrossfadeLength))
-            // {
-            //     float delaySampleChange = 50;
-            //     // delay is shrinking
-            //     if (gDelayInSamples > gTargetDelayInSamples)  
-            //     {
-            //         gDelayInSamples -= delaySampleChange;
-            //         if( fabsf_neon(gDelayInSamples - gTargetDelayInSamples) > DELAY_SAMPLE_ERR )
-            //         {
-            //             gDelayGrowth = DELAY_GROWTH_AMOUNT;
-            //         } else {
-            //             gDelayGrowth = 0;
-            //         }
-            //     }
-            //     // delay is growing
-            //     else if (gDelayInSamples < gTargetDelayInSamples)
-            //     {    
-            //         gDelayInSamples += delaySampleChange;
-            //         if( fabsf_neon(gDelayInSamples - gTargetDelayInSamples) > DELAY_SAMPLE_ERR )
-            //         {
-            //             gDelayGrowth = -1 * DELAY_GROWTH_AMOUNT;    
-            //         } else {
-            //             gDelayGrowth = 0;
-            //         }
-            //     }
-            //     else 
-            //     {
-            //         gDelayGrowth = 0.0;
-            //     }
-                
-            //     // we update the read pointer
-         //        gNewLastDelayBufReadPtr = gNewDelayBufReadPtr;
-            //     gNewDelayBufReadPtr = (gDelayBufWritePtr - gTargetDelayInSamples + DELAY_BUFFER_SIZE);
-         //       gNewDelayBufReadPtr += (1 - gDelayGrowth);
-        
-            //     // wrap read pointer
-            //     if(gNewDelayBufReadPtr >= DELAY_BUFFER_SIZE)
-            //         gNewDelayBufReadPtr -= DELAY_BUFFER_SIZE; 
-            //     if(gNewDelayBufReadPtr < 0)
-            //         gNewDelayBufReadPtr += DELAY_BUFFER_SIZE; 
-                    
-         //       // fractional delay computation
-         //       long rpi = (long)floorf_neon(gNewDelayBufReadPtr);
-         //       double a = gNewDelayBufReadPtr - (double)rpi;
-         //       new_del_l = (a * gDelayBuffer_l[rpi]) + ((1-a) * gDelayBuffer_l[rpi+1]);
-         //       new_del_r = (a * gDelayBuffer_r[rpi]) + ((1-a) * gDelayBuffer_r[rpi+1]);
-
-            //     // crossfade based on counter
-         //       gCrossfadeCounter += 1;
-         //       del_out_l = ((gCrossfadeCounter/gCrossfadeLength) * del_out_l) + ((gCrossfadeLength - gCrossfadeCounter)/gCrossfadeLength * new_del_l);
-         //       del_out_r = ((gCrossfadeCounter/gCrossfadeLength) * del_out_r) + ((gCrossfadeLength - gCrossfadeCounter)/gCrossfadeLength * new_del_r);
-            // }
-            
-            // if(gCrossfadeCounter == gCrossfadeLength)
-            // {
-            //     gCrossfadeCounter = 0;
-            // }
 
             out_l += gDelayAmount*del_out_l;
             out_r += gDelayAmount*del_out_r;
 
             // Write the sample into the output buffer -- done!
-            audioWrite(context, n, 0, del_out_l);
-            audioWrite(context, n, 1, del_out_r);
+            audioWrite(context, n, 0, (gDelayAmount * dry_l) + (gDelayAmountPre * del_out_l));
+            audioWrite(context, n, 1, (gDelayAmount * dry_r) + (gDelayAmountPre * del_out_r ));
             
             gCount++; 
             if(gCount % (int)(context->audioSampleRate*gInterval) == 0) {
                 gSecondsElapsed += gInterval;
-                rt_printf("samps %f %f %f %f\n",gTapTempoMSIntervals[0], gTapTempoMSIntervals[1], gDelayTimeMS, gTapTempoMS);
+                rt_printf("samps %f %f\n", gDelayTimeMS, out_l);
             }
         }
 }
