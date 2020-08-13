@@ -9,7 +9,7 @@
 #define DELAY_MOD_SAMPLES 10000 // samples for LFO modulation
 #define LFO_FREQ_RANGE 2        
 
-#define DELAY_BUFFER_SIZE 176400
+#define DELAY_BUFFER_SIZE 88200
 #define CONTROL_FRAME_SIZE 8192
 
 #define DELAY_SAMPLE_ERR 60 // for potentiometer drift
@@ -126,7 +126,8 @@ void setDelayTime_Background(void* arg)
         float diff = gTargetDelayInSamples - gDelayInSamples;
         
         // if this is a "small" delay change
-        if(fabsf_neon(gDelayInSamples - gTargetDelayInSamples) < DELAY_CROSSFADE_CUTOFF)
+        // if(fabsf_neon(gDelayInSamples - gTargetDelayInSamples) < DELAY_CROSSFADE_CUTOFF)
+        if(diff < DELAY_CROSSFADE_CUTOFF)
         {
             // delay is shrinking
             if (gDelayInSamples > gTargetDelayInSamples)  
@@ -390,7 +391,7 @@ void render(BelaContext *context, void *userData)
             gCount++; 
             if(gCount % (int)(context->audioSampleRate*gInterval) == 0) {
                 gSecondsElapsed += gInterval;
-                rt_printf("samps %f %f\n", gDelayTimeMS, out_l);
+                rt_printf("samps %f %f %f\n", gTargetDelayInSamples, gDelayAmount, gDelayAmountPre);
             }
         }
 }
